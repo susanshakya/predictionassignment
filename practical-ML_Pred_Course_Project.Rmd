@@ -1,0 +1,119 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Susan Shakya"
+date: "April 14, 2016"
+output: html_document
+---
+
+##Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+###Data
+The data sets was originated from here:
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz40iHm7JQz
+
+###Goal
+For this project, we are given data from accelerometers on the belt, forearm, arm, and dumbell of 6 research study participants. Our training data consists of accelerometer data and a label identifying the quality of the activity the participant was doing. Our testing data consists of accelerometer data without the identifying label. Our goal is to predict the labels for the test set observations.
+
+##Getting & Cleaning Data
+The first step is to get the data and check all the fields in training and test data are exactly same.
+```{r}
+#Loading all the libraries
+library(caret)
+#library(rattle)
+url_raw_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+training <- "pml-training.csv"
+training<-read.csv(training, na.strings=c("NA","","#DIV/0!"), header=TRUE)
+#download.file(url=url_raw_training, destfile=file_dest_training, method="curl")
+url_raw_test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testing <- "pml-testing.csv"
+testing <- read.csv(testing, na.strings=c("NA","","#DIV/0!"), header=TRUE)
+#download.file(url=url_raw_testing, destfile=file_dest_testing, method="curl")
+
+# Get column names
+colnames_train <- colnames(training)
+colnames_test <- colnames(testing)
+
+# Verify that the column names (excluding classe and problem_id) are identical in the training and test set.
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+```
+Creating training and test set.Also, Clean data values which are null.
+```{r}
+# remove variables with nearly zero variance
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing <- testing[, -nzv]
+
+# remove variables that are almost always NA
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.90
+training <- training[, mostlyNA==F]
+testing <- testing[, mostlyNA==F]
+
+# remove variables that don't make much sense for prediction (X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp . . .), which happen to be the first seven variables
+training <- training[, -(1:7)]
+testing <- testing[, -(1:7)]
+
+#Predictors information after data cleaning
+nearZeroVar(training,saveMetrics = TRUE)
+```
+Creating Training data set (60%) and test data (40%) from given training data
+```{r}
+set.seed(007)
+intrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+my_training <- training[intrain, ]; my_testing <- training[-intrain, ]
+dim(my_training); dim(my_testing)
+```
+Lets see how our remaining predictors with higest unique percentage fit together 
+```{r}
+featurePlot(x=training[,c("roll_arm","pitch_arm","yaw_arm","roll_dumbbell","pitch_dumbbell","yaw_dumbbell","pitch_belt","yaw_belt","roll_forearm","pitch_forearm","yaw_forearm")],y=training$classe)
+```
+
+Data cleaning process is now compelted. We have 52 predictor variables left after cleaning. These predictors will be used to fit different ML models.
+
+##Prediction using ML Algorithms
+As hinted by professor during video lectures, Decision tree combined with boosting and Random forest algorithms perform best (accurate) though they might be slow. Since, our training data is 11776 records, we will be training models based on those algorithms.
+
+I will start with decision tree.
+```{r, echo=FALSE}
+library(rpart)
+library(rpart.plot)
+library(rattle)
+model_dectree <- rpart(classe ~ ., data=my_training, method="class")
+fancyRpartPlot(model_dectree)
+```
+
+Note: This tree plotting techniques derived from : http://blog.revolutionanalytics.com/2013/06/plotting-classification-and-regression-trees-with-plotrpart.html
+
+###Decision Tree Evaluation
+```{r}
+predictions_dectree <- predict(model_dectree, my_testing, type = "class")
+confusionMatrix(predictions_dectree, my_testing$classe)
+```
+The evaluation matrix shows that, our decision tree model achieved accuray of just 69.16% which is not satisfactory in our case. We will divert from our initial planning to apply boosting algorithm to decision tree as decision tree achived far less accuracy then we have expected. We will directly apply random forest algorithms and see how it performs. 
+
+Lets quicly see the results of random forest.
+```{r, echo=FALSE}
+library(randomForest)
+cv_para=trainControl(method="cv", number=4, verboseIter=F)
+model_randfor <- train(classe ~ ., data=my_training, method="rf",trControl=cv_para)
+model_randfor$finalModel
+```
+It took my machine around 5 Mins to generate this above model.
+
+###Random Forest Evaluation
+```{r}
+predictions_randfor <- predict(model_randfor, my_testing)
+confusionMatrix(predictions_randfor, my_testing$classe)
+```
+
+This matrix as you can see shows that, our random forest model has achieved 99.41% accuracy and 0.0059 out of sample error., which is far more better than decision tree model that we evaluated previously. Getting 99.41% accuracy is great, so I will using this model for test set rather than decision tree.
+
+##Prediction on Test data
+Lets use the provided test data set and evaluate the output from our best model.
+```{r}
+predictions_test <- predict(model_randfor, testing)
+predictions_test
+```
+Notes: Studied this excellent pdf for implementation this Project.
+https://www.r-project.org/nosvn/conferences/useR-2013/Tutorials/kuhn/user_caret_2up.pdf
